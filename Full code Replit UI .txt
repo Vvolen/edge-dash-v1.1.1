@@ -1,0 +1,748 @@
+# Create the improved v1.1.1 package (frontend, backend, README) and zip it
+import os, textwrap, json, zipfile, io, time, pathlib
+
+base_dir = "/mnt/data/edge-dash-v1.1.1"
+frontend_dir = os.path.join(base_dir, "frontend")
+backend_dir = os.path.join(base_dir, "backend")
+os.makedirs(frontend_dir, exist_ok=True)
+os.makedirs(backend_dir, exist_ok=True)
+
+# ----------------- FRONTEND index.html (v1.1.1) -----------------
+frontend_html = """<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <title>Meme-Coin Edge Dash v1.1.1</title>
+  <style>
+    :root{
+      --bg:#0b0f14; --card:#101823; --fg:#e8f1ff; --muted:#8fa0b3;
+      --good:#00d084; --warn:#ffb000; --bad:#ff4d4f; --accent:#4cc9f0; --line:#1f2a3a;
+    }
+    html,body{margin:0;background:var(--bg);color:var(--fg);font-family:ui-sans-serif,-apple-system,Segoe UI,Roboto,Helvetica,Arial}
+    .wrap{max-width:1100px;margin:20px auto;padding:0 14px}
+    h1{font-size:20px;margin:0 0 10px}
+    .grid{display:grid;grid-template-columns:repeat(12,1fr);gap:12px}
+    .card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:12px}
+    .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+    input,select,button{background:#0e1522;color:var(--fg);border:1px solid var(--line);padding:8px 10px;border-radius:10px;font-size:14px}
+    button.primary{background:var(--accent);color:#002033;font-weight:800}
+    .metric{font-size:26px;font-weight:800}
+    .muted{color:var(--muted);font-size:12px}
+    .status{display:inline-block;font-weight:900;text-transform:uppercase;border-radius:999px;padding:4px 10px;border:1px solid var(--line)}
+    .status.ok{background:#0d1a28}
+    .status.good{background:rgba(0,208,132,.12);border-color:var(--good);color:var(--good)}
+    .status.warn{background:rgba(255,176,0,.12);border-color:var(--warn);color:var(--warn)}
+    .status.bad{background:rgba(255,77,79,.12);border-color:var(--bad);color:var(--bad)}
+    .status.stale{background:#0d1320;color:#5f7089;border-color:#2a3546}
+    .pill{padding:4px 8px;border-radius:999px;border:1px solid var(--line);background:#0e1522}
+    .pill.good{border-color:var(--good);color:var(--good)}
+    .pill.warn{border-color:var(--warn);color:var(--warn)}
+    .pill.bad{border-color:var(--bad);color:var(--bad)}
+    .big{font-size:38px}
+    .k{font-variant-numeric:tabular-nums}
+    svg{display:block}
+    pre.timeline{white-space:pre-wrap;max-height:140px;overflow:auto;margin:0}
+    .right{float:right}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>⚡️ Meme-Coin Edge Dashboard <span class="muted">v1.1.1</span></h1>
+
+    <!-- Controls -->
+    <div class="card">
+      <div class="row">
+        <label>Mint
+          <input id="mint" size="50" value="8X4TnmkHzavxEJuaYTkqjFbUgrwBgaXVuRHhGFR2pump">
+        </label>
+        <label>Entry (USD)
+          <input id="entry" type="number" step="0.000001" placeholder="e.g., 0.0123">
+        </label>
+        <label>Interval
+          <select id="interval">
+            <option value="3000">3s</option>
+            <option value="5000" selected>5s</option>
+            <option value="10000">10s</option>
+          </select>
+        </label>
+        <label>Preset
+          <select id="preset">
+            <option value="trend">Trend-friendly</option>
+            <option value="neutral" selected>Neutral</option>
+            <option value="defensive">Defensive</option>
+          </select>
+        </label>
+        <span class="muted">+200% Mode <input type="checkbox" id="mode200"></span>
+        <button class="primary" id="start">Start</button>
+        <button id="pause">Pause</button>
+        <button id="sound">Enable Sounds</button>
+      </div>
+      <div class="muted" id="cfg"></div>
+    </div>
+
+    <!-- Top -->
+    <div class="grid" style="margin-top:12px;">
+      <div class="card" style="grid-column: span 4;">
+        <h3 class="muted">Price</h3>
+        <div class="metric big k" id="price">—</div>
+        <div class="muted">PnL: <span id="pnl" class="k">—</span></div>
+      </div>
+      <div class="card" style="grid-column: span 4;">
+        <h3 class="muted">Indicators</h3>
+        <div class="metric k"><span id="ema9">—</span> • <span id="mid">—</span> • <span id="atr">—</span></div>
+        <div class="muted">Bands: <span id="bup" class="k">—</span> / <span id="bdn" class="k">—</span></div>
+      </div>
+      <div class="card" style="grid-column: span 4;">
+        <h3 class="muted">Status</h3>
+        <div id="status" class="status ok">waiting…</div><br/>
+        <div class="muted">Signals: <span id="signals"></span></div>
+        <div class="muted">
+          Edge: <span id="edge" class="pill">—</span> • Smoothed: <span id="edgeSmooth" class="pill">—</span> •
+          Action: <span id="action" class="pill">—</span>
+        </div>
+      </div>
+
+      <div class="card" style="grid-column: span 6;">
+        <h3 class="muted">5m Flow (Dexscreener)</h3>
+        <div class="metric k"><span id="buys">—</span> buys • <span id="sells">—</span> sells • Vol 5m: <span id="vol">—</span></div>
+      </div>
+
+      <div class="card" style="grid-column: span 6;">
+        <h3 class="muted">On-chain Sentiment (HELIUS)</h3>
+        <div class="metric">
+          Buyers: <span id="buyers5m">—</span> • Sellers: <span id="sellers5m">—</span>
+        </div>
+        <div class="muted">
+          Inter-arrival CV: <span id="iacv">—</span> • Identical-size: <span id="ident">—</span> • Rebuy loops: <span id="rebuy">—</span>
+        </div>
+        <div class="muted">Botness: <span id="botness" class="pill">—</span></div>
+        <div style="margin-top:8px">
+          <svg id="buyersSpark" width="300" height="36"></svg>
+          <div class="muted">buyers/5m sparkline (last ~30 pts)</div>
+        </div>
+      </div>
+
+      <div class="card" style="grid-column: span 12;">
+        <h3 class="muted">Health</h3>
+        <div>
+          Last price: <span class="k" id="hp">—</span> ms •
+          Last flow: <span class="k" id="hf">—</span> ms •
+          <span id="paused" class="pill">OK</span>
+          <span class="right muted">v1.1.1</span>
+        </div>
+        <div class="muted">Degrade pauses new signals after 3 misses. Stale grayout if price>15s or flow>20s. Backoff increases poll interval on consecutive errors.</div>
+      </div>
+    </div>
+
+    <div class="card" style="margin-top:12px;">
+      <h3 class="muted">Status Timeline</h3>
+      <pre id="timeline" class="timeline muted"></pre>
+    </div>
+  </div>
+
+<script>
+/* ---------------- CONFIG + PRESETS ---------------- */
+const CONFIG = {
+  dsBase: "https://api.dexscreener.com/latest/dex/tokens/",
+  FLOW_BASE: "https://<YOUR-BACKEND>.replit.app",   // set to your backend URL
+  polling: { priceMs: 5000, flowMs: 7000, backoffMax: 5 }, // multiplier cap
+  debounceAudioMs: 4500,
+  bars: { closeMinutes: 3, bbPeriod: 20, emaPeriod: 9, atrPeriod: 14 },
+  stale: { priceMs: 15000, flowMs: 20000 },
+  smoothing: { edgeAlpha: 0.3 }, // EMA smoothing for Edge score
+  gating: { actionHoldBars: 2 }, // require sustained action for N closes
+  v2: { useOHLC: false, ohlcFrameSec: 60 } // hooks for true ATR in v2
+};
+const PRESETS = {
+  trend:    { tp1Pct:0.30, tp2Pct:0.60, tp1Trim:0.25, tp2Trim:0.25, atr:{press:1.6, neutral:1.1, def:0.6}, botDef:6 },
+  neutral:  { tp1Pct:0.30, tp2Pct:0.60, tp1Trim:0.25, tp2Trim:0.25, atr:{press:1.5, neutral:1.0, def:0.5}, botDef:6 },
+  defensive:{ tp1Pct:0.25, tp2Pct:0.50, tp1Trim:0.30, tp2Trim:0.30, atr:{press:1.3, neutral:0.9, def:0.4}, botDef:5 }
+};
+const $ = (id)=>document.getElementById(id);
+
+/* ---------------- State ---------------- */
+const S = {
+  // series (ring-buffers)
+  prices: [], times: [],
+  dsBuys5m:null, dsSells5m:null, dsVol5m:null,
+  flow: { buyers5m:null, sellers5m:null, interArrivalCV:null, identicalSizeRatio:null, rebuyLoops:null, botness:null },
+  buyersSeries: [],
+  // health
+  lastPriceAt:null, lastFlowAt:null,
+  priceMisses:0, flowMisses:0, dataPaused:false,
+  // 3m bars
+  barCloses:[], barMids:[], barUp:[], barDn:[], barEma9:[], barAtr:[],
+  lastSignals:[], lastSignalKind:null, prevImb:null,
+  // control
+  running:false, evalTimer:null,
+  entry:null, mint:null, soundOK:false, mode200:false, presetKey:'neutral',
+  // backoff + throttling
+  priceBackoff:1, flowBackoff:1, priceLoopId:0, flowLoopId:0, lastRenderAt:0,
+  // smoothing & gating
+  edgeEMA:null, actionCurrent:null, actionPending:null, actionHold:0,
+  // manual pause
+  manualPaused:false
+};
+
+/* ---------------- Utils ---------------- */
+const capPush=(arr,val,cap)=>{ arr.push(val); if(arr.length>cap) arr.shift(); };
+const emaCalc=(arr,n)=>{ if(!arr.length) return null; const k=2/(n+1); let e=arr[0]; for(let i=1;i<arr.length;i++) e=arr[i]*k+e*(1-k); return e; };
+const sma=(arr,n)=> arr.length>=n ? arr.slice(-n).reduce((a,b)=>a+b,0)/n : null;
+const stdev=(arr,n)=>{ if(arr.length<n) return null; const s=arr.slice(-n); const m=s.reduce((a,b)=>a+b,0)/n; return Math.sqrt(s.reduce((a,b)=>a+(b-m)*(b-m),0)/n); };
+const atrCloseToClose=(closes,n=14)=>{ if(closes.length<n+1) return null; const TR=[]; for(let i=1;i<closes.length;i++) TR.push(Math.abs(closes[i]-closes[i-1])); let atr=TR.slice(0,n).reduce((a,b)=>a+b,0)/n; for(let i=n;i<TR.length;i++) atr=(atr*(n-1)+TR[i])/n; return atr; };
+const fmt=(x,d=6)=> x==null?'—':Number(x).toFixed(d);
+const pct=(x)=> (x>0?'+':'')+(x*100).toFixed(2)+'%';
+
+/* ---------------- Audio (anti-spam) ---------------- */
+let lastBeep=0;
+function beep(kind='tp'){
+  if(!S.soundOK || S.dataPaused) return;
+  const now=Date.now(); if(now-lastBeep<CONFIG.debounceAudioMs) return;
+  lastBeep=now;
+  try{
+    const ctx=new (window.AudioContext||window.webkitAudioContext)();
+    const o=ctx.createOscillator(); const g=ctx.createGain();
+    o.type= kind==='danger'?'square':'sine'; o.frequency.value= kind==='danger'?320:880;
+    o.connect(g); g.connect(ctx.destination); g.gain.value=0.02; o.start(); setTimeout(()=>{o.stop();ctx.close()},180);
+  }catch(e){}
+}
+
+/* ---------------- Poll loops with exponential backoff ---------------- */
+function nextDelay(base, backoff){ return Math.min(CONFIG.polling.backoffMax, backoff) * base; }
+
+async function priceLoop(myId){
+  if(!S.running || myId!==S.priceLoopId || S.manualPaused) return;
+  try{
+    await pollDex(S.mint);
+    S.priceMisses=0; S.priceBackoff=1;
+  }catch(e){
+    S.priceMisses++; S.priceBackoff=Math.min(CONFIG.polling.backoffMax, S.priceBackoff*2||2);
+  }
+  setTimeout(()=>priceLoop(myId), nextDelay(CONFIG.polling.priceMs, S.priceBackoff));
+}
+
+async function flowLoop(myId){
+  if(!S.running || myId!==S.flowLoopId || S.manualPaused) return;
+  try{
+    if (!CONFIG.FLOW_BASE.includes("<YOUR-BACKEND>")) await pollFlow(S.mint);
+    S.flowMisses=0; S.flowBackoff=1;
+  }catch(e){
+    S.flowMisses++; S.flowBackoff=Math.min(CONFIG.polling.backoffMax, S.flowBackoff*2||2);
+  }
+  setTimeout(()=>flowLoop(myId), nextDelay(CONFIG.polling.flowMs, S.flowBackoff));
+}
+
+/* ---------------- Pollers ---------------- */
+async function pollDex(mint){
+  const res = await fetch(CONFIG.dsBase+encodeURIComponent(mint),{cache:'no-store'});
+  const j = await res.json(); const p=j?.pairs?.[0];
+  if(!p){ S.priceMisses++; return; } // keep last price; don't clobber
+  const price=Number(p.priceUsd); if(!isFinite(price)){ S.priceMisses++; return; }
+  capPush(S.prices, price, 1200); capPush(S.times, Date.now(), 1200);
+  S.dsBuys5m=p.txns?.m5?.buys ?? null; S.dsSells5m=p.txns?.m5?.sells ?? null; S.dsVol5m=p.volume?.m5 ?? null;
+  S.lastPriceAt=Date.now();
+  throttleRender();
+}
+
+async function pollFlow(mint){
+  const res = await fetch(`${CONFIG.FLOW_BASE}/flow?mint=${encodeURIComponent(mint)}&window=300`,{cache:'no-store'});
+  const j = await res.json(); if(j.error) throw new Error(j.error);
+  S.flow=j; S.lastFlowAt=Date.now();
+  if(typeof j.buyers5m==='number') capPush(S.buyersSeries, j.buyers5m, 30);
+  throttleRender();
+}
+
+/* ---------------- Indicators & Edge ---------------- */
+function computeIndicators(){
+  const closes=S.prices;
+  const mid=sma(closes,CONFIG.bars.bbPeriod);
+  const sd=stdev(closes,CONFIG.bars.bbPeriod);
+  const up=(mid!=null&&sd!=null)?mid+2*sd:null;
+  const dn=(mid!=null&&sd!=null)?mid-2*sd:null;
+  const e9=emaCalc(closes,CONFIG.bars.emaPeriod);
+  const a14=CONFIG.v2.useOHLC ? null : atrCloseToClose(closes,CONFIG.bars.atrPeriod);
+  return {mid,up,dn,e9,a14};
+}
+
+function computeEdgeRaw(){
+  const p=S.prices.at(-1); const {mid,e9}=computeIndicators();
+  const aboveEMA=p!=null&&e9!=null&&p>e9; const aboveMid=p!=null&&mid!=null&&p>mid;
+  const imbNow=(S.flow.buyers5m??0)-(S.flow.sellers5m??0);
+  const improving=(S.prevImb==null)? true : (imbNow>S.prevImb);
+  S.prevImb=imbNow;
+  const trend=(aboveEMA?20:0)+(aboveMid?20:0)+(improving?10:0);
+  const bot=(typeof S.flow.botness==='number')?S.flow.botness:5; const anti=(10-bot)*3;
+  const score=trend+anti;
+  const preset=PRESETS[S.presetKey]||PRESETS.neutral;
+  let action='Neutral', factor=preset.atr.neutral;
+  if(score>=70){ action='Press'; factor=preset.atr.press; }
+  else if(score<50 || bot>=preset.botDef){ action='Defensive'; factor=preset.atr.def; }
+  return {score, action, factor};
+}
+function applySmoothingAndGating(edgeRaw){
+  // EMA smoothing
+  const a = CONFIG.smoothing.edgeAlpha;
+  S.edgeEMA = (S.edgeEMA==null)? edgeRaw.score : (a*edgeRaw.score + (1-a)*S.edgeEMA);
+  // Action gating (require sustained change across N closes)
+  const desired = edgeRaw.action;
+  if (S.actionCurrent == null) { S.actionCurrent = desired; S.actionPending = desired; S.actionHold = 0; }
+  if (desired !== S.actionCurrent) {
+    if (S.actionPending !== desired) { S.actionPending = desired; S.actionHold = 1; }
+    else { S.actionHold++; if (S.actionHold >= CONFIG.gating.actionHoldBars) { S.actionCurrent = desired; S.actionHold = 0; } }
+  } else { S.actionPending = desired; S.actionHold = 0; }
+  return { score: edgeRaw.score, scoreSmooth: S.edgeEMA, action: S.actionCurrent, factor: edgeRaw.factor };
+}
+
+/* ---------------- Render (throttled) ---------------- */
+function drawSpark(id, series){
+  const svg=$(id); if(!svg) return; svg.setAttribute('viewBox','0 0 300 36'); svg.innerHTML='';
+  if(!series || series.length<2) return;
+  const max=Math.max(...series), min=Math.min(...series);
+  const y=v=> (max===min)?18:36-((v-min)/(max-min))*30-3; const step=300/(series.length-1);
+  let d=`M 0 ${y(series[0])}`; for(let i=1;i<series.length;i++) d+=` L ${i*step} ${y(series[i])}`;
+  const path=document.createElementNS('http://www.w3.org/2000/svg','path');
+  path.setAttribute('d',d); path.setAttribute('stroke','#4cc9f0'); path.setAttribute('fill','none'); path.setAttribute('stroke-width','2');
+  svg.appendChild(path);
+}
+function throttleRender(){
+  const now=Date.now(); if(now-S.lastRenderAt<200) return; // ~5fps
+  S.lastRenderAt=now; render();
+}
+
+function render(){
+  const price=S.prices.at(-1);
+  $('price').textContent=fmt(price,6);
+  $('pnl').textContent=(S.entry!=null&&isFinite(S.entry))? pct((price-S.entry)/S.entry) : '—';
+
+  const {mid,up,dn,e9,a14}=computeIndicators();
+  $('ema9').textContent=fmt(e9,6); $('mid').textContent=fmt(mid,6);
+  $('bup').textContent=fmt(up,6); $('bdn').textContent=fmt(dn,6);
+  $('atr').textContent=a14==null?'—':(+a14).toFixed(6);
+
+  $('buys').textContent=S.dsBuys5m ?? '—'; $('sells').textContent=S.dsSells5m ?? '—'; $('vol').textContent=S.dsVol5m ?? '—';
+  $('buyers5m').textContent=S.flow.buyers5m ?? '—'; $('sellers5m').textContent=S.flow.sellers5m ?? '—';
+  $('iacv').textContent=(S.flow.interArrivalCV!=null)? S.flow.interArrivalCV.toFixed(2) : '—';
+  $('ident').textContent=(S.flow.identicalSizeRatio!=null)? (((S.flow.identicalSizeRatio*100)|0)+'%') : '—';
+  $('rebuy').textContent=S.flow.rebuyLoops ?? '—';
+  const bot=(typeof S.flow.botness==='number')?S.flow.botness:null; const botEl=$('botness');
+  botEl.textContent=(bot==null)?'—':`${bot}/10`; botEl.className='pill '+(bot==null?'':bot>=6?'bad':bot>=3?'warn':'good');
+
+  $('hp').textContent=S.lastPriceAt? (Date.now()-S.lastPriceAt) : '—';
+  $('hf').textContent=S.lastFlowAt? (Date.now()-S.lastFlowAt) : '—';
+
+  // Stale + degrade
+  const stalePrice=!S.lastPriceAt || (Date.now()-S.lastPriceAt)>CONFIG.stale.priceMs;
+  const staleFlow =!S.lastFlowAt  || (Date.now()-S.lastFlowAt)>CONFIG.stale.flowMs;
+  S.dataPaused = (S.priceMisses>=3) || (S.flowMisses>=3) || S.manualPaused;
+  const paused=$('paused');
+  paused.textContent= S.manualPaused? 'PAUSED' : (S.dataPaused? 'DATA PAUSED' : (stalePrice||staleFlow ? 'STALE' : 'OK'));
+  paused.className='pill '+(S.manualPaused?'warn': S.dataPaused?'bad': (stalePrice||staleFlow)?'warn':'good');
+
+  // Edge & action (with smoothing + gating)
+  const edgeRaw = computeEdgeRaw();
+  const edge = applySmoothingAndGating(edgeRaw);
+  const edgeEl=$('edge'); edgeEl.textContent=Math.round(edge.score);
+  edgeEl.className='pill '+(edge.score>=70?'good':edge.score>=50?'warn':'bad');
+  const edgeSmooth=$('edgeSmooth'); edgeSmooth.textContent=Math.round(edge.scoreSmooth||edge.score);
+  edgeSmooth.className='pill '+((edge.scoreSmooth||edge.score)>=70?'good':(edge.scoreSmooth||edge.score)>=50?'warn':'bad');
+
+  const actEl=$('action'); actEl.textContent=`${edge.action||'—'} (trail −${edge.factor}×ATR)`;
+  actEl.className='pill '+((edge.action||'Neutral')==='Press'?'good':(edge.action||'Neutral')==='Defensive'?'bad':'warn');
+
+  // Status pill
+  const pill=$('status'); pill.className='status ok';
+  if(stalePrice||staleFlow) { pill.classList.add('stale'); pill.textContent='STALE'; }
+  else if(S.dataPaused)     { pill.classList.add('warn');  pill.textContent= S.manualPaused ? 'PAUSED' : 'DATA PAUSED'; }
+  else {
+    const active=S.lastSignals.at(-1)?.kind ?? null;
+    if(active==='DANGER') pill.classList.add('bad'), pill.textContent='DANGER';
+    else if(active==='CAUTION') pill.classList.add('warn'), pill.textContent='CAUTION';
+    else if(['TP1','TP2','RELOAD'].includes(active)) pill.classList.add('good'), pill.textContent='ACTIVE';
+    else pill.textContent='OK';
+  }
+
+  // Signals pill display
+  const box=$('signals'); box.innerHTML='';
+  const sig=S.lastSignals.at(-1);
+  if(!sig) box.innerHTML='<span class="pill muted">No signals yet</span>';
+  else {
+    const span=document.createElement('span');
+    span.className='pill '+(sig.kind==='DANGER'?'bad':sig.kind==='CAUTION'?'warn':'good');
+    span.textContent=`${sig.kind}${sig.note?': '+sig.note:''}`; box.appendChild(span);
+  }
+  drawSpark('buyersSpark', S.buyersSeries);
+}
+
+/* ---------------- 3m scheduler (strict closes) ---------------- */
+function scheduleEval(){
+  const ms=CONFIG.bars.closeMinutes*60*1000; const now=Date.now(); const next=Math.ceil(now/ms)*ms; const wait=next-now+50;
+  if(S.evalTimer) clearTimeout(S.evalTimer);
+  S.evalTimer=setTimeout(()=>{ onBarClose(); scheduleEval(); }, wait);
+}
+function pushBar(){
+  const p=S.prices.at(-1); if(p==null) return;
+  const {mid,up,dn,e9,a14}=computeIndicators();
+  capPush(S.barCloses,p,200); capPush(S.barMids,mid,200); capPush(S.barUp,up,200); capPush(S.barDn,dn,200); capPush(S.barEma9,e9,200); capPush(S.barAtr,a14,200);
+}
+function onBarClose(){
+  pushBar();
+  if(!S.dataPaused){ evaluateSignals(); }
+  throttleRender();
+}
+
+/* ---------------- Signals (strictly on closes) ---------------- */
+function evaluateSignals(){
+  const n=S.barCloses.length; if(n<2) return;
+  const price=S.barCloses[n-1], mid=S.barMids[n-1], ema9=S.barEma9[n-1], atr=S.barAtr[n-1];
+  const preset=PRESETS[S.presetKey]||PRESETS.neutral;
+  let sig=null;
+
+  // TP tiers (skip TP2 in +200% mode)
+  if(S.entry!=null && isFinite(S.entry)){
+    const r=(price-S.entry)/S.entry;
+    if(!S.mode200 && r>=preset.tp2Pct) sig={kind:'TP2', note:`+${Math.round(preset.tp2Pct*100)}% (trim ${Math.round(preset.tp2Trim*100)}%)`};
+    else if(r>=preset.tp1Pct)          sig={kind:'TP1', note:`+${Math.round(preset.tp1Pct*100)}% (trim ${Math.round(preset.tp1Trim*100)}%)`};
+  }
+  // CAUTION
+  if(!sig && price<ema9 && price<mid) sig={kind:'CAUTION', note:'below EMA9 & midline'};
+  // DANGER: push → back inside → 2 closes sub-mid
+  if(!sig && n>=3){
+    const wasOutside=S.barCloses[n-3] > (S.barUp[n-3] ?? Infinity);
+    const backInside=S.barCloses[n-2] <= (S.barUp[n-2] ?? Infinity);
+    const stillSubMid=(S.barCloses[n-2] < (S.barMids[n-2] ?? -Infinity)) && (S.barCloses[n-1] < (S.barMids[n-1] ?? -Infinity));
+    if(wasOutside && backInside && stillSubMid) sig={kind:'DANGER', note:'exhaustion & failed reclaim'};
+  }
+  // RELOAD: reclaim + improving flow + ATR contracting vs 5 bars ago
+  if(!sig && n>=6){
+    const prevBelow=S.barCloses[n-2] < (S.barMids[n-2] ?? -Infinity);
+    const reclaim = price >= (mid ?? Infinity);
+    const imbNow=(S.flow.buyers5m??0)-(S.flow.sellers5m??0);
+    const imbPrev=(S._prevImbBars ?? imbNow);
+    const atrNow=atr ?? 0, atrPrev=S.barAtr[n-6] ?? atrNow;
+    const contracting= atrNow>0 && atrPrev>0 && atrNow<atrPrev;
+    if(prevBelow && reclaim && (imbNow>imbPrev) && contracting) sig={kind:'RELOAD', note:'midline hold + flow improving'};
+    S._prevImbBars=imbNow;
+  }
+  // Emit only if kind changed
+  if(sig && sig.kind!==S.lastSignalKind){
+    S.lastSignalKind=sig.kind;
+    capPush(S.lastSignals, {ts:new Date().toLocaleTimeString(), ...sig}, 10);
+    appendTimeline(sig);
+    if(sig.kind==='DANGER') beep('danger');
+    if(sig.kind==='TP1' || sig.kind==='TP2') beep('tp');
+  }
+}
+function appendTimeline(sig){
+  const line=`[${new Date().toLocaleTimeString()}] ${sig.kind}${sig.note?': '+sig.note:''}`;
+  const el=$('timeline'); el.textContent=(el.textContent? el.textContent+'\\n':'') + line;
+}
+
+/* ---------------- Controls ---------------- */
+function start(){
+  S.running=false; S.priceLoopId++; S.flowLoopId++;
+  S.mint=$('mint').value.trim(); S.entry=parseFloat($('entry').value);
+  const iv=parseInt($('interval').value,10); CONFIG.polling.priceMs=iv;
+  S.mode200=$('mode200').checked; S.presetKey=$('preset').value;
+  S.manualPaused=false; $('pause').textContent='Pause';
+
+  localStorage.setItem('mint',S.mint);
+  localStorage.setItem('entry',isFinite(S.entry)?String(S.entry):'');
+  localStorage.setItem('interval',String(iv));
+  localStorage.setItem('mode200',S.mode200?'1':'0');
+  localStorage.setItem('preset',S.presetKey);
+
+  Object.assign(S,{
+    prices:[],times:[],barCloses:[],barMids:[],barUp:[],barDn:[],barEma9:[],barAtr:[],
+    lastSignals:[], lastSignalKind:null, buyersSeries:[], priceMisses:0, flowMisses:0, dataPaused:false,
+    prevImb:null, priceBackoff:1, flowBackoff:1, edgeEMA:null, actionCurrent:null, actionPending:null, actionHold:0
+  });
+  $('timeline').textContent='';
+  const p=PRESETS[S.presetKey];
+  $('cfg').textContent=`Preset=${S.presetKey} · TP: +${p.tp1Pct*100}%/+${p.tp2Pct*100}% · Trim: ${p.tp1Trim*100}%/${p.tp2Trim*100}% · ATR P/N/D: ${p.atr.press}/${p.atr.neutral}/${p.atr.def} · BotDef≥${p.botDef}`;
+
+  S.running=true;
+  priceLoop(S.priceLoopId);
+  flowLoop(S.flowLoopId);
+  scheduleEval();
+}
+$('start').addEventListener('click', start);
+$('pause').addEventListener('click', ()=>{
+  S.manualPaused = !S.manualPaused;
+  $('pause').textContent = S.manualPaused ? 'Resume' : 'Pause';
+  if (!S.manualPaused && S.running){ // resume loops
+    S.priceLoopId++; S.flowLoopId++;
+    priceLoop(S.priceLoopId);
+    flowLoop(S.flowLoopId);
+  }
+});
+$('sound').addEventListener('click', ()=>{ S.soundOK=true; $('sound').textContent='Sounds On'; beep('tp'); });
+window.addEventListener('load', ()=>{
+  const m=localStorage.getItem('mint'); if(m) $('mint').value=m;
+  const e=localStorage.getItem('entry'); if(e) $('entry').value=e;
+  const iv=localStorage.getItem('interval'); if(iv) $('interval').value=iv;
+  const md=localStorage.getItem('mode200'); $('mode200').checked = md==='1';
+  const pr=localStorage.getItem('preset'); if(pr) $('preset').value=pr;
+});
+</script>
+</body>
+</html>
+"""
+open(os.path.join(frontend_dir, "index.html"), "w").write(frontend_html)
+
+# ----------------- BACKEND index.js (v1.1.1) -----------------
+backend_js = r"""// v1.1.1 — HELIUS flow backend (CommonJS)
+// npm i express cors node-fetch@2
+const express = require("express");
+const cors = require("cors");
+const fetch = require("node-fetch");
+
+const HELIUS_KEY = process.env.HELIUS_KEY;
+const PORT = process.env.PORT || 3000;
+const CACHE_MS = Number(process.env.CACHE_MS || 7000);
+const ALLOW_ORIGINS = (process.env.FRONTEND_ALLOW_ORIGINS || "").split(",").map(s => s.trim()).filter(Boolean);
+
+if (!HELIUS_KEY) { console.error("Missing HELIUS_KEY"); process.exit(1); }
+
+const RPC = `https://mainnet.helius-rpc.com/?api-key=${HELIUS_KEY}`;
+const app = express();
+
+// ---- CORS allowlist ----
+app.use(cors({
+  origin: (origin, cb) => {
+    if (!origin) return cb(null, true);
+    if (ALLOW_ORIGINS.length === 0) return cb(null, true); // dev open
+    if (ALLOW_ORIGINS.includes(origin)) return cb(null, true);
+    return cb(new Error("CORS: origin not allowed: " + origin));
+  }
+}));
+
+app.use((req,res,next)=>{ res.setHeader('Cache-Control','private, max-age=5'); next(); });
+
+// ---- Cache ----
+const cache = new Map();
+const getCache = (k) => { const c = cache.get(k); return (c && (Date.now()-c.ts<CACHE_MS)) ? c.data : null; };
+const setCache = (k, data) => cache.set(k, { ts: Date.now(), data });
+
+// ---- HELIUS RPC helper ----
+async function helius(method, params) {
+  const r = await fetch(RPC, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params })
+  });
+  const j = await r.json();
+  if (j.error) throw new Error(JSON.stringify(j.error));
+  return j.result;
+}
+
+// ---- Paginated signatures helper ----
+async function getSignaturesPaged(address, limitPerPage=200, pages=1, before=null){
+  let all = [];
+  let cursor = before;
+  for (let i=0; i<pages; i++){
+    const params = cursor ? [address, { limit: limitPerPage, before: cursor }] : [address, { limit: limitPerPage }];
+    const page = await helius("getSignaturesForAddress", params);
+    if (!page || page.length===0) break;
+    all = all.concat(page);
+    cursor = page[page.length-1]?.signature;
+    if (!cursor) break;
+  }
+  return all;
+}
+
+// ---- Recent parsed tx touching the mint (with paging & time window) ----
+async function recentParsedTxsForMint(mint, seconds = 300, pages = 1) {
+  const since = Math.floor(Date.now() / 1000) - seconds - 60;
+  const sigs = await getSignaturesPaged(mint, 200, pages);
+  const recentSigs = sigs.filter(s => s.blockTime && s.blockTime >= since).map(s => s.signature);
+  if (recentSigs.length === 0) return [];
+  const chunks = []; // getParsedTransactions can handle up to ~100 at once safely
+  for (let i = 0; i < recentSigs.length; i += 100) {
+    const batch = recentSigs.slice(i, i+100);
+    const txs = await helius("getParsedTransactions", [batch, { maxSupportedTransactionVersion: 0 }]);
+    chunks.push(...txs.filter(Boolean));
+  }
+  return chunks;
+}
+
+// ---- Botness scoring ----
+function botnessScore({ identicalSizeRatio, interArrivalCV, rebuyLoops }) {
+  let score = 0;
+  if (identicalSizeRatio > 0.35) score += 4; else if (identicalSizeRatio > 0.25) score += 2;
+  if (interArrivalCV != null && interArrivalCV < 0.35) score += 3; else if (interArrivalCV != null && interArrivalCV < 0.50) score += 1;
+  if (rebuyLoops > 6) score += 2; else if (rebuyLoops > 3) score += 1;
+  return Math.max(0, Math.min(10, score));
+}
+
+// ---- /health ----
+app.get("/health", async (req,res)=>{
+  try{
+    // Quick ping: call a harmless method to check connectivity
+    await helius("getLatestBlockhash", []);
+    res.json({ ok:true, time:new Date().toISOString() });
+  }catch(e){
+    res.status(500).json({ ok:false, error:e.message||String(e) });
+  }
+});
+
+// ---- /flow — on-chain sentiment ----
+// GET /flow?mint=<MINT>&window=300[&source=mint][&pages=2]
+app.get("/flow", async (req, res) => {
+  try {
+    const mint = String(req.query.mint || "").trim();
+    if (!mint) return res.status(400).json({ error: "missing ?mint=<tokenMint>" });
+    const windowSec = Number(req.query.window || 300);
+    const source = String(req.query.source || "mint");
+    const pages = Math.max(1, Math.min(5, Number(req.query.pages || 1))); // cap pages
+
+    if (source !== "mint") {
+      return res.status(501).json({ error: "source not implemented; use source=mint" });
+    }
+
+    const key = `flow:${mint}:${windowSec}:${source}:${pages}`;
+    const hit = getCache(key); if (hit) return res.json(hit);
+
+    const txs = await recentParsedTxsForMint(mint, windowSec, pages);
+
+    const buyers = new Map(), sellers = new Map(), buySizes = [], buyTimes = [];
+    for (const tx of txs) {
+      const pre  = tx.meta?.preTokenBalances || [];
+      const post = tx.meta?.postTokenBalances || [];
+      const keys = tx.transaction?.message?.accountKeys || [];
+      for (const p of post) {
+        if (p.mint !== mint) continue;
+        const idx = p.accountIndex; const owner = p.owner || keys[idx]?.pubkey;
+        const before = pre.find(q => q.accountIndex === idx)?.uiTokenAmount?.uiAmount || 0;
+        const after  = p.uiTokenAmount?.uiAmount || 0;
+        const d = after - before;
+        if (d > 0) { buyers.set(owner, (buyers.get(owner)||0)+d); buySizes.push(d); if (tx.blockTime) buyTimes.push(tx.blockTime); }
+        if (d < 0) { sellers.set(owner,(sellers.get(owner)||0)+Math.abs(d)); }
+      }
+    }
+
+    let interArrivalCV = null;
+    if (buyTimes.length > 2) {
+      buyTimes.sort((a,b)=>a-b);
+      const diffs=[]; for (let i=1;i<buyTimes.length;i++) diffs.push(buyTimes[i]-buyTimes[i-1]);
+      const mean=diffs.reduce((a,b)=>a+b,0)/diffs.length;
+      const sd=Math.sqrt(diffs.reduce((a,b)=>a+(b-mean)**2,0)/diffs.length);
+      interArrivalCV = sd/mean;
+    }
+
+    let identicalSizeRatio = 0;
+    if (buySizes.length >= 5) {
+      const rounded = buySizes.map(x => Number(x.toFixed(3)));
+      const counts = new Map(); for (const v of rounded) counts.set(v, (counts.get(v)||0)+1);
+      identicalSizeRatio = Math.max(...counts.values())/rounded.length;
+    }
+
+    let rebuyLoops = 0; for (const w of buyers.keys()) if (sellers.has(w)) rebuyLoops++;
+
+    const out = {
+      mint, windowSec, pages,
+      buyers5m: buyers.size,
+      sellers5m: sellers.size,
+      interArrivalCV,
+      identicalSizeRatio,
+      rebuyLoops,
+    };
+    out.botness = botnessScore(out);
+    setCache(key, out);
+    res.json(out);
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: e.message || String(e) });
+  }
+});
+
+// ---- /ohlc (stub for v2 true-ATR & AVWAP) ----
+app.get("/ohlc", async (req,res)=>{
+  res.status(501).json({ error: "Not enabled in v1.1.1. Use /flow. (/ohlc planned in v2 for true ATR/AVWAP.)" });
+});
+
+// ---- /x (stub for v2 off-chain hype) ----
+app.get("/x", async (req,res)=>{
+  res.status(501).json({ error: "Not enabled in v1.1.1. Provide X_BEARER and implement in v2." });
+});
+
+app.get("/", (_req,res)=>res.send("ok"));
+app.listen(PORT, ()=>console.log(`Flow backend v1.1.1 up on ${PORT}`));
+process.on('unhandledRejection', (r)=>console.error('UNHANDLED', r));
+"""
+open(os.path.join(backend_dir, "index.js"), "w").write(backend_js)
+
+# ----------------- README.md -----------------
+readme = """# Meme-Coin Edge Dashboard (v1.1.1)
+
+iPad-first PWA dashboard that fuses **price micro-structure** (Dexscreener) with **on-chain sentiment** (HELIUS Pro). Signals fire on **3-minute closes** only. This is a refinement of v1.1 with **Edge-score smoothing, action gating, manual pause**, and backend paging.
+
+---
+
+## File Tree
+- `/frontend/index.html` — single-file SPA (HTML/CSS/JS)
+- `/backend/index.js` — Node/Express HELIUS flow service
+
+---
+
+## Deploy (Replit)
+
+### Backend
+1. New **Node.js** Repl
+2. **Secrets:** `HELIUS_KEY=<your_api_key>`  
+   Optional: `FRONTEND_ALLOW_ORIGINS=https://<your-frontend>.replit.app` and `CACHE_MS=7000`
+3. Shell: `npm i express cors node-fetch@2`
+4. Paste `/backend/index.js` as `index.js` and **Run**
+5. Verify: `curl https://<your-backend>.replit.app/flow?mint=<MINT>`
+
+### Frontend
+1. New **HTML/CSS/JS** Repl
+2. Paste `/frontend/index.html` as `index.html`
+3. Set `CONFIG.FLOW_BASE` to your backend URL
+4. **Run** → open URL → Safari **Add to Home Screen**
+
+---
+
+## What’s new vs v1.1
+- Edge score **EMA smoothing** (`CONFIG.smoothing.edgeAlpha`)
+- **Action gating** (hold changes for N closes, `CONFIG.gating.actionHoldBars`)
+- **Pause/Resume** button (manual control)
+- Dexscreener **graceful fallback** if pair missing (don’t clobber last price)
+- Backend **paging** (`/flow?pages=1..5`) + `/health` endpoint
+- Same safety nets: degrade mode, stale grayout, exponential backoff, PWA style
+
+---
+
+## Using It
+- **Mint** and **Entry** in USD; choose polling interval
+- Select **Preset** (Trend/Neutral/Defensive) and optional **+200% mode**
+- Enable **Sounds** once for TP/DANGER pings
+- Watch **Edge** and **Smoothed** score + **Action** pill
+
+**Action reference**
+- **Press** → trail = max(midline) − **1.5×ATR** (preset-adjusted)
+- **Neutral** → trail = − **1.0×ATR**
+- **Defensive** → trail = − **0.5×ATR**, pre-trim spikes, no adds
+
+---
+
+## Notes
+- Keep `pages<=3` for `/flow` to avoid excessive RPC usage on Replit
+- In production, put backend behind Cloudflare with 5s cache if needed
+- v2 will introduce `/ohlc` for **true ATR** and **AVWAP**, plus optional `/x` hype badge
+
+"""
+open(os.path.join(base_dir, "README.md"), "w").write(readme)
+
+# Zip everything
+zip_path = "/mnt/data/edge-dash-v1.1.1.zip"
+with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
+    for root, dirs, files in os.walk(base_dir):
+        for f in files:
+            full = os.path.join(root, f)
+            rel = os.path.relpath(full, base_dir)
+            zf.write(full, arcname=f"edge-dash-v1.1.1/{rel}")
+
+zip_path
